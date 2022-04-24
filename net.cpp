@@ -8,28 +8,32 @@ Net::Net(const std::vector<unsigned int> &topology)
     for(size_t li = 0; li < numLayer; ++li)
     {
         m_layers.push_back(Layer());
-        const size_t numOutputs = li == numLayer - 1 ? 0 : topology[li + 1];
-        for(size_t ni = 0; ni <= topology[ni]; ++ni)
+        bool isOutputLayer = li == numLayer - 1;
+        const size_t numNeurons = isOutputLayer ? topology[li] : topology[li] + 1;
+        const size_t numOutputs = isOutputLayer ? 0 : topology[li + 1] + 1;
+
+        for(size_t ni = 0; ni < numNeurons; ++ni)
         {
-            m_layers.back().push_back(Neuron(numOutputs, ni));
+            //Neuron n(numOutputs, ni, isOutputLayer ? Net::relu : Net::sigmoid, isOutputLayer ? Net::reluDer : Net::sigmoidDer);
+           Neuron n(numOutputs, ni, Net::hypTan, Net::hypTanDer);
+            m_layers.back().push_back(n);
         }
+
+
+        m_layers.back().back().setOutputValue(1.0); //bias neuron
     }
 }
 
 void Net::feedForward(const std::vector<double> &inputValues)
 {
     for(size_t ni = 0; ni < inputValues.size(); ++ni)
-    {
         m_layers[0][ni].setOutputValue(inputValues[ni]);
-    }
 
-    for(size_t li = 0; li < m_layers.size(); ++li)
+    for(size_t li = 1; li < m_layers.size(); ++li)
     {
         const Layer& prevLayer = m_layers[li-1];
         for(size_t ni = 0; ni < m_layers[li].size(); ++ni)
-        {
             m_layers[li][ni].feedForward(prevLayer);
-        }
     }
 }
 
@@ -68,10 +72,39 @@ void Net::backProp(std::vector<double> &targetValues)
 
 void Net::getResults(std::vector<double> &resultValues) const
 {
-    resultValues.clear();
     const Layer& lastLayer = m_layers.back();
     for(size_t ni = 0; ni < lastLayer.size(); ++ni)
         resultValues.push_back(lastLayer.at(ni).getOutputVal());
+}
+
+double Net::sigmoid(double x)
+{
+    return 1.0 / (1.0 + exp(-x));
+}
+
+double Net::sigmoidDer(double x)
+{
+    return sigmoid(x) * (1.0 - sigmoid(x));
+}
+
+double Net::hypTan(double x)
+{
+    return tanh(x);
+}
+
+double Net::hypTanDer(double x)
+{
+    return 1 - x * x;
+}
+
+double Net::relu(double x)
+{
+    return x > 0 ? x : 0.0;
+}
+
+double Net::reluDer(double x)
+{
+    return x > 0 ? 1.0 : 0.0;
 }
 
 void Net::calcOverallError(const std::vector<double>& targetValues)
@@ -88,19 +121,22 @@ void Net::calcOverallError(const std::vector<double>& targetValues)
     m_error = sqrt(m_error);
 }
 
-double Net::getRandomWeight()
+double Net::getRandom()
 {
-    std::mt19937::result_type seed = time(0);
-    auto real_rand = std::bind(std::uniform_real_distribution<double>(0,1), std::mt19937(seed));
-    return real_rand();
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> urand(0, 1);
+    return urand(gen);
 }
 
-Net::Neuron::Neuron(size_t numOutputs, size_t index): m_index(index)
+Net::Neuron::Neuron(size_t numOutputs, size_t index, std::function<double(double)> transferFunction,
+                    std::function<double(double)> transferFunctionDer):
+    m_index(index), m_transferFunction(transferFunction), m_transferFunctionDer(transferFunctionDer)
 {
     for(size_t ni = 0; ni < numOutputs; ++ni)
     {
         Connection c;
-        c.W = getRandomWeight();
+        c.W = getRandom();
         c.gradW = 0.0;
         m_outputWeights.push_back(c);
     }
@@ -113,14 +149,14 @@ void Net::Neuron::feedForward(const Layer &prevLayer)
     {
         total += prevLayer[ni].m_outputVal * prevLayer[ni].m_outputWeights[m_index].W;
     }
-    m_outputVal = transferFunction(total);
+    m_outputVal = m_transferFunction(total);
+    bool stop = true;
 }
 
 void Net::Neuron::calcOutputGradients(double targetVal)
 {
     double delta = targetVal - m_outputVal;
-    m_gradient = delta * transferFunctionDer(m_outputVal);
-
+    m_gradient = delta * m_transferFunctionDer(m_outputVal);
 }
 
 double Net::Neuron::sumW(const Layer &nextLayer)
@@ -135,7 +171,7 @@ double Net::Neuron::sumW(const Layer &nextLayer)
 
 void Net::Neuron::calcHiddenGradients(Layer& nextLayer)
 {
-    m_gradient = sumW(nextLayer) * transferFunctionDer(m_outputVal);
+    m_gradient = sumW(nextLayer) * m_transferFunctionDer(m_outputVal);
 }
 
 void Net::Neuron::updateInputWeights(Layer &prevLayer)
@@ -148,14 +184,4 @@ void Net::Neuron::updateInputWeights(Layer &prevLayer)
         neuron.m_outputWeights[m_index].gradW = gradW_new;
         neuron.m_outputWeights[m_index].W += gradW_new;
     }
-}
-
-double Net::Neuron::transferFunction(double x)
-{
-    return 1.0 * (1.0 + exp(-x));
-}
-
-double Net::Neuron::transferFunctionDer(double x)
-{
-    return transferFunction(x)*(1.0 - transferFunction(x));
 }
