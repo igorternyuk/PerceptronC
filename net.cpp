@@ -2,9 +2,6 @@
 #include <random>
 #include <functional>
 
-#define SIGMOID(x) (1.0 / (1.0 + exp(-(x))))
-#define RELU(x) ((x) > 0 ? (x) : 0.0)
-
 Net::Net(const std::vector<unsigned int> &topology)
 {
     const unsigned int numLayer = topology.size();
@@ -38,12 +35,57 @@ void Net::feedForward(const std::vector<double> &inputValues)
 
 void Net::backProp(std::vector<double> &targetValues)
 {
+    calcOverallError(targetValues);
 
+    //Calculate output layer gradients
+
+    Layer& outputLayer = m_layers.back();
+    for(size_t ni = 0; ni < outputLayer.size(); ++ni)
+        outputLayer[ni].calcOutputGradients(targetValues[ni]);
+
+    //Calculate gradients on hidden layers
+
+    for(size_t li = m_layers.size() - 2; li > 0; --li)
+    {
+        Layer& currLayer = m_layers[li];
+        Layer& nextLayer = m_layers[li + 1];
+
+        for(size_t ni = 0; ni < currLayer.size(); ++ni)
+            currLayer[ni].calcHiddenGradients(nextLayer);
+    }
+
+    //Update input weights
+
+    for(size_t li = m_layers.size() - 1; li > 0; --li)
+    {
+        Layer& currLayer = m_layers[li];
+        Layer& prevLayer = m_layers[li - 1];
+
+        for(size_t ni = 0; ni < currLayer.size(); ++ni)
+            currLayer[ni].updateInputWeights(prevLayer);
+    }
 }
 
 void Net::getResults(std::vector<double> &resultValues) const
 {
+    resultValues.clear();
+    const Layer& lastLayer = m_layers.back();
+    for(size_t ni = 0; ni < lastLayer.size(); ++ni)
+        resultValues.push_back(lastLayer.at(ni).getOutputVal());
+}
 
+void Net::calcOverallError(const std::vector<double>& targetValues)
+{
+    const Layer& lastLayer = m_layers.back();
+    m_error = 0.0;
+    for(size_t ni = 0; ni < lastLayer.size(); ++ni)
+    {
+        double delta = targetValues[ni] - lastLayer[ni].getOutputVal();
+        m_error += delta * delta;
+    }
+
+    m_error /= lastLayer.size();
+    m_error = sqrt(m_error);
 }
 
 double Net::getRandomWeight()
@@ -71,5 +113,49 @@ void Net::Neuron::feedForward(const Layer &prevLayer)
     {
         total += prevLayer[ni].m_outputVal * prevLayer[ni].m_outputWeights[m_index].W;
     }
-    m_outputVal = SIGMOID(total);
+    m_outputVal = transferFunction(total);
+}
+
+void Net::Neuron::calcOutputGradients(double targetVal)
+{
+    double delta = targetVal - m_outputVal;
+    m_gradient = delta * transferFunctionDer(m_outputVal);
+
+}
+
+double Net::Neuron::sumW(const Layer &nextLayer)
+{
+    double sum = 0.0;
+
+    for(size_t ni = 0; ni < nextLayer.size(); ++ni)
+        sum += m_outputWeights[ni].W * nextLayer[ni].m_gradient;
+
+    return sum;
+}
+
+void Net::Neuron::calcHiddenGradients(Layer& nextLayer)
+{
+    m_gradient = sumW(nextLayer) * transferFunctionDer(m_outputVal);
+}
+
+void Net::Neuron::updateInputWeights(Layer &prevLayer)
+{
+    for(size_t ni = 0; ni < prevLayer.size(); ++ni)
+    {
+        Neuron& neuron = prevLayer[ni];
+        double gradW_old = neuron.m_outputWeights[m_index].gradW;
+        double gradW_new = eta * neuron.getOutputVal() * m_gradient + alfa * gradW_old;
+        neuron.m_outputWeights[m_index].gradW = gradW_new;
+        neuron.m_outputWeights[m_index].W += gradW_new;
+    }
+}
+
+double Net::Neuron::transferFunction(double x)
+{
+    return 1.0 * (1.0 + exp(-x));
+}
+
+double Net::Neuron::transferFunctionDer(double x)
+{
+    return transferFunction(x)*(1.0 - transferFunction(x));
 }
